@@ -2,6 +2,8 @@ package io.cdpi.trustregistry;
 
 import static org.hamcrest.Matchers.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+
+import io.cdpi.trustregistry.config.SecurityConfig;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -13,7 +15,11 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 /** RFC 9457 responses through the real handler chain, plus admin list-filter validation. */
 class ErrorResponsesTest extends AbstractPostgresTest {
 
-    static final RequestPostProcessor ADMIN = httpBasic(ADMIN_USER, ADMIN_PASSWORD);
+    static final RequestPostProcessor ADMIN = request -> {
+        var authenticated = httpBasic(ADMIN_USER, ADMIN_PASSWORD).postProcessRequest(request);
+        authenticated.addHeader(SecurityConfig.ADMIN_REQUEST_HEADER, SecurityConfig.ADMIN_REQUEST_HEADER_VALUE);
+        return authenticated;
+    };
     static final String PROBLEM = "application/problem+json";
 
     @Test
