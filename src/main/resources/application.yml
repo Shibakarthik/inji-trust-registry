@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: inji-trust-registry
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/inji_trust}
+    username: ${DB_USERNAME:inji_trust}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate          # schema is owned by db/init/*.sql, never by Hibernate
+    properties:
+      hibernate:
+        default_schema: trust
+      jakarta:
+        persistence:
+          query:
+            timeout: 3000
+
+server:
+  port: 8080
+  forward-headers-strategy: framework   # correct URLs behind an HTTPS reverse proxy
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+registry:
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD}         # required, min 12 chars; never committed
+
+springdoc:
+  api-docs:
+    path: /v1/openapi.json
+  swagger-ui:
+    path: /swagger-ui.html
+  default-produces-media-type: application/json
