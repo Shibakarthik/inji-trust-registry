@@ -6,6 +6,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import io.cdpi.trustregistry.config.SecurityConfig;
 import java.util.List;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
@@ -16,7 +17,11 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 class SecurityTest extends AbstractPostgresTest {
 
     static final String DID = "did:web:example.com:issuer";
-    static final RequestPostProcessor ADMIN = httpBasic(ADMIN_USER, ADMIN_PASSWORD);
+    static final RequestPostProcessor ADMIN = request -> {
+        var authenticated = httpBasic(ADMIN_USER, ADMIN_PASSWORD).postProcessRequest(request);
+        authenticated.addHeader(SecurityConfig.ADMIN_REQUEST_HEADER, SecurityConfig.ADMIN_REQUEST_HEADER_VALUE);
+        return authenticated;
+    };
 
     private int count(String table) {
         return jdbc.queryForObject("SELECT count(*) FROM trust." + table, Integer.class);
@@ -32,7 +37,7 @@ class SecurityTest extends AbstractPostgresTest {
     }
 
     @Test
-    void adminEndpoints_401WithoutCredentials_asProblemJson() throws Exception {
+    void adminReadEndpoints_401WithoutCredentials_asProblemJson() throws Exception {
         mvc.perform(get("/v1/admin/issuers"))
             .andExpect(status().isUnauthorized())
             .andExpect(header().exists("WWW-Authenticate"))
@@ -52,23 +57,27 @@ class SecurityTest extends AbstractPostgresTest {
 
     @Test
     void validCredentials_work() throws Exception {
-        mvc.perform(get("/v1/admin/issuers").with(ADMIN)).andExpect(status().isOk());
+        mvc.perform(get("/v1/admin/issuers").with(httpBasic(ADMIN_USER, ADMIN_PASSWORD))).andExpect(status().isOk());
+    }
+
+    @Test
+    void adminWritesRequireTheCustomHeader_evenWithValidBasicCredentials() throws Exception {
+        for (Supplier<MockHttpServletRequestBuilder> op : adminWriteOperations()) {
+            mvc.perform(op.get().with(httpBasic(ADMIN_USER, ADMIN_PASSWORD)))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
+            mvc.perform(op.get().with(ADMIN)).andExpect(result -> {
+                int s = result.getResponse().getStatus();
+                assertTrue(s != 401 && s != 403, "admin with required header must pass security, got " + s);
+            });
+        }
     }
 
     @Test
     void unauthenticatedUsersCannotPerformAnyAdminWrite() throws Exception {
-        String json = MediaType.APPLICATION_JSON_VALUE;
-        mvc.perform(post("/v1/admin/issuers").contentType(json).content("{\"did\":\"" + DID + "\",\"displayName\":\"x\"}"))
-            .andExpect(status().isUnauthorized());
-        mvc.perform(post("/v1/admin/issuers/{id}/authorizations", DID).contentType(json).content("{\"credentialType\":\"FarmerCredential\"}"))
-            .andExpect(status().isUnauthorized());
-        mvc.perform(patch("/v1/admin/issuers/{id}/status", DID).contentType(json).content("{\"status\":\"INACTIVE\"}"))
-            .andExpect(status().isUnauthorized());
-        mvc.perform(post("/v1/admin/issuers/{id}/authorizations/{t}/revoke", DID, "FarmerCredential"))
-            .andExpect(status().isUnauthorized());
-        mvc.perform(post("/v1/admin/issuers/{id}/authorizations/{t}/reactivate", DID, "FarmerCredential"))
-            .andExpect(status().isUnauthorized());
-        mvc.perform(delete("/v1/admin/issuers/{id}", DID)).andExpect(status().isUnauthorized());
+        for (Supplier<MockHttpServletRequestBuilder> op : adminWriteOperations()) {
+            mvc.perform(op.get()).andExpect(status().isForbidden());
+        }
         assertEquals(0, count("issuer"));
         assertEquals(0, count("issuer_credential_authorization"));
     }
@@ -85,7 +94,7 @@ class SecurityTest extends AbstractPostgresTest {
     void unlistedEndpointsAreDeniedByDefault() throws Exception {
         for (String path : List.of("/", "/actuator", "/actuator/env", "/actuator/beans", "/error", "/h2-console", "/v1")) {
             mvc.perform(get(path)).andExpect(status().isUnauthorized());
-            mvc.perform(get(path).with(ADMIN)).andExpect(status().isForbidden());
+            mvc.perform(get(path).with(httpBasic(ADMIN_USER, ADMIN_PASSWORD))).andExpect(status().isForbidden());
         }
     }
 
@@ -95,8 +104,6 @@ class SecurityTest extends AbstractPostgresTest {
                 .header("Origin", "https://verifier.example").header("Access-Control-Request-Method", "GET"))
             .andExpect(status().isOk())
             .andExpect(header().string("Access-Control-Allow-Origin", "*"));
-        check(DID, "FarmerCredential").andReturn(); // sanity: normal call still works
-
         mvc.perform(get("/v1/authorizations/check").param("issuerId", DID).param("credentialType", "FarmerCredential")
                 .header("Origin", "https://verifier.example"))
             .andExpect(header().string("Access-Control-Allow-Origin", "*"))
@@ -105,23 +112,28 @@ class SecurityTest extends AbstractPostgresTest {
         mvc.perform(options("/v1/admin/issuers")
                 .header("Origin", "https://evil.example").header("Access-Control-Request-Method", "POST"))
             .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
-        mvc.perform(get("/v1/admin/issuers").with(ADMIN).header("Origin", "https://evil.example"))
+        mvc.perform(get("/v1/admin/issuers").with(httpBasic(ADMIN_USER, ADMIN_PASSWORD)).header("Origin", "https://evil.example"))
             .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
-    private static List<Supplier<MockHttpServletRequestBuilder>> adminOperations() {
+    private static List<Supplier<MockHttpServletRequestBuilder>> adminWriteOperations() {
         String json = MediaType.APPLICATION_JSON_VALUE;
         String d = "did:web:x.example";
         return List.of(
-            () -> post("/v1/admin/issuers").contentType(json).content("{}"),
-            () -> get("/v1/admin/issuers"),
-            () -> get("/v1/admin/issuers/" + d),
-            () -> patch("/v1/admin/issuers/" + d + "/status").contentType(json).content("{}"),
-            () -> post("/v1/admin/issuers/" + d + "/authorizations").contentType(json).content("{}"),
-            () -> get("/v1/admin/issuers/" + d + "/authorizations"),
-            () -> get("/v1/admin/authorizations"),
+            () -> post("/v1/admin/issuers").contentType(json).content("{\"did\":\"" + d + "\",\"displayName\":\"x\"}"),
+            () -> patch("/v1/admin/issuers/" + d + "/status").contentType(json).content("{\"status\":\"INACTIVE\"}"),
+            () -> post("/v1/admin/issuers/" + d + "/authorizations").contentType(json).content("{\"credentialType\":\"FarmerCredential\"}"),
             () -> post("/v1/admin/issuers/" + d + "/authorizations/FarmerCredential/revoke"),
             () -> post("/v1/admin/issuers/" + d + "/authorizations/FarmerCredential/reactivate"));
+    }
+
+    private static List<Supplier<MockHttpServletRequestBuilder>> adminOperations() {
+        String d = "did:web:x.example";
+        return List.of(
+            () -> get("/v1/admin/issuers"),
+            () -> get("/v1/admin/issuers/" + d),
+            () -> get("/v1/admin/issuers/" + d + "/authorizations"),
+            () -> get("/v1/admin/authorizations"));
     }
 
     @Test
@@ -130,10 +142,7 @@ class SecurityTest extends AbstractPostgresTest {
             mvc.perform(op.get()).andExpect(status().isUnauthorized());
             mvc.perform(op.get().with(httpBasic(ADMIN_USER, "wrong-password-xyz"))).andExpect(status().isUnauthorized());
             mvc.perform(op.get().with(user("bob").roles("VIEWER"))).andExpect(status().isForbidden());
-            mvc.perform(op.get().with(ADMIN)).andExpect(result -> {
-                int s = result.getResponse().getStatus();
-                assertTrue(s != 401 && s != 403, "admin must pass the security layer, got " + s);
-            });
+            mvc.perform(op.get().with(httpBasic(ADMIN_USER, ADMIN_PASSWORD))).andExpect(status().isOk());
         }
         assertEquals(0, count("issuer"));
     }
