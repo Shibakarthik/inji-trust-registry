@@ -148,6 +148,7 @@ class SecurityTest extends AbstractPostgresTest {
             mvc.perform(op.get().with(user("bob").roles("VIEWER"))).andExpect(status().isForbidden());
             mvc.perform(op.get().with(httpBasic(ADMIN_USER, ADMIN_PASSWORD))).andExpect(status().isOk());
         }
-        assertEquals(0, count("issuer"));
+        // The issuer is deliberately seeded above so the detail/list operations can return 200.
+        assertEquals(1, count("issuer"));
     }
 }
