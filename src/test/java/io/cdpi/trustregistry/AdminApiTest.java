@@ -2,6 +2,8 @@ package io.cdpi.trustregistry;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+
+import io.cdpi.trustregistry.config.SecurityConfig;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -17,7 +19,11 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 class AdminApiTest extends AbstractPostgresTest {
 
     static final String DID = "did:web:example.com:issuer";
-    static final RequestPostProcessor ADMIN = httpBasic(ADMIN_USER, ADMIN_PASSWORD);
+    static final RequestPostProcessor ADMIN = request -> {
+        var authenticated = httpBasic(ADMIN_USER, ADMIN_PASSWORD).postProcessRequest(request);
+        authenticated.addHeader(SecurityConfig.ADMIN_REQUEST_HEADER, SecurityConfig.ADMIN_REQUEST_HEADER_VALUE);
+        return authenticated;
+    };
 
     private ResultActions register(String did) throws Exception {
         return mvc.perform(post("/v1/admin/issuers").with(ADMIN).contentType(MediaType.APPLICATION_JSON)

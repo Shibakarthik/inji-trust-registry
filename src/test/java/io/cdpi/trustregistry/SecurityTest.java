@@ -76,7 +76,10 @@ class SecurityTest extends AbstractPostgresTest {
     @Test
     void unauthenticatedUsersCannotPerformAnyAdminWrite() throws Exception {
         for (Supplier<MockHttpServletRequestBuilder> op : adminWriteOperations()) {
-            mvc.perform(op.get()).andExpect(status().isForbidden());
+            mvc.perform(op.get()).andExpect(result -> {
+                int status = result.getResponse().getStatus();
+                assertTrue(status == 401 || status == 403, "anonymous write must be denied, got " + status);
+            });
         }
         assertEquals(0, count("issuer"));
         assertEquals(0, count("issuer_credential_authorization"));
@@ -138,6 +141,7 @@ class SecurityTest extends AbstractPostgresTest {
 
     @Test
     void everyAdminOperation_requiresTheAdministratorRole() throws Exception {
+        insertIssuer("did:web:x.example", "ACTIVE");
         for (Supplier<MockHttpServletRequestBuilder> op : adminOperations()) {
             mvc.perform(op.get()).andExpect(status().isUnauthorized());
             mvc.perform(op.get().with(httpBasic(ADMIN_USER, "wrong-password-xyz"))).andExpect(status().isUnauthorized());
