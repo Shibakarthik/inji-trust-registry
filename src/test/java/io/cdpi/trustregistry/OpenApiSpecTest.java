@@ -25,6 +25,11 @@ class OpenApiSpecTest extends AbstractPostgresTest {
         assertTrue(spec.path("openapi").asText().startsWith("3."), spec.path("openapi").asText());
         assertEquals("v1", spec.path("info").path("version").asText());
         assertEquals("basic", spec.path("components").path("securitySchemes").path("basicAuth").path("scheme").asText());
+
+        JsonNode headerScheme = spec.path("components").path("securitySchemes").path("adminRequestHeader");
+        assertEquals("apiKey", headerScheme.path("type").asText());
+        assertEquals("header", headerScheme.path("in").asText());
+        assertEquals("X-Registry-Admin-Request", headerScheme.path("name").asText());
     }
 
     @Test
@@ -64,8 +69,20 @@ class OpenApiSpecTest extends AbstractPostgresTest {
                 Map.Entry<String, JsonNode> op = ops.next();
                 adminOperations++;
                 String where = op.getKey() + " " + path.getKey();
-                assertFalse(op.getValue().path("security").path(0).path("basicAuth").isMissingNode(),
+                JsonNode security = op.getValue().path("security").path(0);
+                assertFalse(security.path("basicAuth").isMissingNode(),
                     "basicAuth missing for " + where);
+                boolean unsafe = switch (op.getKey()) {
+                    case "post", "put", "patch", "delete" -> true;
+                    default -> false;
+                };
+                if (unsafe) {
+                    assertFalse(security.path("adminRequestHeader").isMissingNode(),
+                        "admin request header missing for " + where);
+                } else {
+                    assertTrue(security.path("adminRequestHeader").isMissingNode(),
+                        "read operation must not require admin request header: " + where);
+                }
                 assertFalse(op.getValue().path("responses").path("401").isMissingNode(), "401 missing for " + where);
                 assertFalse(op.getValue().path("responses").path("403").isMissingNode(), "403 missing for " + where);
             }
